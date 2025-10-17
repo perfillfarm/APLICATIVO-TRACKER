@@ -1,28 +1,30 @@
-import { 
-  collection, 
-  doc, 
-  setDoc, 
-  getDoc, 
-  getDocs, 
-  updateDoc, 
-  deleteDoc, 
-  query, 
-  where, 
-  orderBy, 
+import {
+  collection,
+  doc,
+  setDoc,
+  getDoc,
+  getDocs,
+  updateDoc,
+  deleteDoc,
+  query,
+  where,
+  orderBy,
   limit,
   onSnapshot,
   serverTimestamp,
   writeBatch
 } from 'firebase/firestore';
-import { 
-  createUserWithEmailAndPassword, 
-  signInWithEmailAndPassword, 
-  signOut, 
+import {
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  signOut,
   updateProfile,
   User as FirebaseUser
 } from 'firebase/auth';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { db, auth, storage } from '@/config/firebase';
+import { logger } from '@/utils/logger';
+import { retryWithBackoff, isFirebaseNetworkError } from '@/utils/retryHelper';
 
 // Types
 export interface User {
@@ -72,29 +74,27 @@ export interface UserSettings {
 }
 
 export class FirebaseService {
-  // Authentication Methods
   static async registerUser(email: string, password: string, name: string): Promise<User> {
-    try {
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-      const firebaseUser = userCredential.user;
-      
-      // Update display name
-      await updateProfile(firebaseUser, { displayName: name });
-      
-      // Create user document
-      const userData: User = {
-        id: firebaseUser.uid,
-        email: firebaseUser.email!,
-        name,
-        createdAt: new Date(),
-        updatedAt: new Date()
-      };
-      
-      await setDoc(doc(db, 'users', firebaseUser.uid), {
-        ...userData,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
-      });
+    return retryWithBackoff(async () => {
+      try {
+        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+        const firebaseUser = userCredential.user;
+
+        await updateProfile(firebaseUser, { displayName: name });
+
+        const userData: User = {
+          id: firebaseUser.uid,
+          email: firebaseUser.email!,
+          name,
+          createdAt: new Date(),
+          updatedAt: new Date()
+        };
+
+        await setDoc(doc(db, 'users', firebaseUser.uid), {
+          ...userData,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
       
       // Create default profile
       await this.createUserProfile(firebaseUser.uid, {
@@ -118,30 +118,46 @@ export class FirebaseService {
         updatedAt: new Date()
       });
       
-      return userData;
-    } catch (error) {
-      console.error('Error registering user:', error);
-      throw error;
-    }
+        return userData;
+      } catch (error) {
+        logger.error('[Firebase] Error registering user:', error);
+        throw error;
+      }
+    }, {
+      maxAttempts: 2,
+      onRetry: (attempt, error) => {
+        if (isFirebaseNetworkError(error)) {
+          logger.warn(`[Firebase] Network error during registration, retrying (attempt ${attempt})`);
+        }
+      }
+    });
   }
   
   static async loginUser(email: string, password: string): Promise<FirebaseUser> {
-    try {
-      const userCredential = await signInWithEmailAndPassword(auth, email, password);
-      return userCredential.user;
-    } catch (error) {
-      console.error('Error logging in:', error);
-      throw error;
-    }
+    return retryWithBackoff(async () => {
+      try {
+        const userCredential = await signInWithEmailAndPassword(auth, email, password);
+        return userCredential.user;
+      } catch (error) {
+        logger.error('[Firebase] Error logging in:', error);
+        throw error;
+      }
+    }, {
+      maxAttempts: 2,
+      onRetry: (attempt, error) => {
+        if (isFirebaseNetworkError(error)) {
+          logger.warn(`[Firebase] Network error during login, retrying (attempt ${attempt})`);
+        }
+      }
+    });
   }
   
   static async logoutUser(): Promise<void> {
     try {
-      console.log('🔥 [Firebase] Starting Firebase Auth signOut...');
-      
-      // Get current user before signing out
+      logger.info('[Firebase] Starting Firebase Auth signOut');
+
       const currentUser = auth.currentUser;
-      console.log('🔥 [Firebase] Current user before logout:', currentUser?.uid || 'none');
+      logger.debug('[Firebase] Current user before logout:', currentUser?.uid || 'none');
       
       // Clear any cached auth state
       if (typeof window !== 'undefined') {

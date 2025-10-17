@@ -1,9 +1,10 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 import { router } from 'expo-router';
 import { auth } from '@/config/firebase';
 import { FirebaseService, User, UserProfile } from '@/services/FirebaseService';
 import { AuthService, AuthUser } from '@/services/authService';
+import { logger } from '@/utils/logger';
 
 interface AuthContextData {
   user: FirebaseUser | null;
@@ -34,14 +35,13 @@ export const FirebaseAuthProvider: React.FC<{ children: React.ReactNode }> = ({ 
       try {
         setLoading(true);
         setError(null);
-        console.log(`🔐 [Auth] State changed:`, firebaseUser ? `User ${firebaseUser.uid}` : 'No user');
+        logger.debug('[Auth] State changed:', firebaseUser ? `User ${firebaseUser.uid}` : 'No user');
         
         if (firebaseUser) {
-          console.log(`🔐 [Auth] User authenticated: ${firebaseUser.uid}`);
+          logger.info('[Auth] User authenticated:', firebaseUser.uid);
           setUser(firebaseUser);
           setIsAuthenticated(true);
-          
-          // Salvar dados do usuário no AuthService
+
           const authUser: AuthUser = {
             uid: firebaseUser.uid,
             email: firebaseUser.email!,
@@ -49,42 +49,37 @@ export const FirebaseAuthProvider: React.FC<{ children: React.ReactNode }> = ({ 
             photoURL: firebaseUser.photoURL || undefined,
           };
           await AuthService.saveUser(authUser);
-          
-          // Load user profile
-          console.log(`👤 [Auth] Loading profile for user ${firebaseUser.uid}`);
+
+          logger.debug('[Auth] Loading profile for user:', firebaseUser.uid);
           const profile = await FirebaseService.getUserProfile(firebaseUser.uid);
           setUserProfile(profile);
-          console.log(`✅ [Auth] Profile loaded:`, profile ? 'Success' : 'Not found');
-          
-          // Log tutorial status for debugging
+          logger.info('[Auth] Profile loaded:', profile ? 'Success' : 'Not found');
+
           if (profile) {
-            console.log(`🎓 [Auth] User tutorial status: ${profile.hasSeenTutorial ? 'SEEN' : 'NOT SEEN'}`);
+            logger.debug('[Auth] Tutorial status:', profile.hasSeenTutorial ? 'SEEN' : 'NOT SEEN');
           }
           
           // Check if migration is needed
           await checkAndMigrateLocalData(firebaseUser.uid);
         } else {
-          console.log(`🚪 [Auth] User logged out`);
-          
-          // Ensure complete state cleanup
+          logger.info('[Auth] User logged out');
+
           setUser(null);
           setUserProfile(null);
           setIsAuthenticated(false);
           setError(null);
-          
-          // Clear any remaining local data
+
           try {
             await AuthService.clearAllData();
-            console.log(`🧹 [Auth] Local data cleared after logout`);
+            logger.debug('[Auth] Local data cleared after logout');
           } catch (error) {
-            console.warn(`⚠️ [Auth] Could not clear local data:`, error);
+            logger.warn('[Auth] Could not clear local data:', error);
           }
         }
       } catch (error) {
-        console.error('❌ [Auth] Error in auth state change:', error);
+        logger.error('[Auth] Error in auth state change:', error);
         setError('Authentication error occurred');
-        
-        // On error, ensure user is logged out
+
         setUser(null);
         setUserProfile(null);
         setIsAuthenticated(false);
@@ -97,7 +92,7 @@ export const FirebaseAuthProvider: React.FC<{ children: React.ReactNode }> = ({ 
     if (typeof window !== 'undefined') {
       const handleStorageChange = (e: StorageEvent) => {
         if (e.key === 'logout' && e.newValue === 'true') {
-          console.log('🔄 [Auth] Logout detected from another tab');
+          logger.info('[Auth] Logout detected from another tab');
           handleCrossTabLogout();
         }
       };
@@ -111,7 +106,7 @@ export const FirebaseAuthProvider: React.FC<{ children: React.ReactNode }> = ({ 
     return unsubscribe;
   }, []);
 
-  const handleCrossTabLogout = async () => {
+  const handleCrossTabLogout = useCallback(async () => {
     try {
       setUser(null);
       setUserProfile(null);
@@ -119,168 +114,149 @@ export const FirebaseAuthProvider: React.FC<{ children: React.ReactNode }> = ({ 
       setError(null);
       router.replace('/auth/login');
     } catch (error) {
-      console.error('❌ [Auth] Error handling cross-tab logout:', error);
+      logger.error('[Auth] Error handling cross-tab logout:', error);
     }
-  };
-  const checkAndMigrateLocalData = async (userId: string) => {
+  }, []);
+  const checkAndMigrateLocalData = useCallback(async (userId: string) => {
     try {
-      console.log(`🔄 [${userId}] Checking migration status...`);
+      logger.debug(`[Migration] Checking status for user: ${userId}`);
       const migrationFlag = await AuthService.getUser();
-      
+
       if (!migrationFlag) {
-        console.log(`📦 [${userId}] Starting data migration...`);
+        logger.info(`[Migration] Starting data migration for user: ${userId}`);
         try {
           await migrateLocalDataToFirebase(userId);
-          console.log(`✅ [${userId}] Migration completed successfully`);
+          logger.info(`[Migration] Completed successfully for user: ${userId}`);
         } catch (error) {
-          console.error('Migration failed, but continuing:', error);
-          console.error(`❌ [${userId}] Migration failed:`, error);
-          // Don't block the user if migration fails
+          logger.error(`[Migration] Failed for user: ${userId}`, error);
         }
       } else {
-        console.log(`✅ [${userId}] Migration already completed`);
+        logger.debug(`[Migration] Already completed for user: ${userId}`);
       }
     } catch (error) {
-      console.error('Error checking migration:', error);
-      console.error(`❌ [${userId}] Migration check failed:`, error);
+      logger.error(`[Migration] Check failed for user: ${userId}`, error);
     }
-  };
+  }, []);
 
-  const migrateLocalDataToFirebase = async (userId: string) => {
+  const migrateLocalDataToFirebase = useCallback(async (userId: string) => {
     try {
-      console.log(`📦 [${userId}] Collecting local data for migration...`);
-      // Migration logic can be implemented here if needed
-      // For now, we'll skip this as the new system handles data differently
-
-      console.log(`ℹ️ [${userId}] Migration skipped - using new auth system`);
+      logger.debug(`[Migration] Collecting local data for user: ${userId}`);
+      logger.info(`[Migration] Skipped - using new auth system for user: ${userId}`);
     } catch (error) {
-      console.error('❌ Error migrating local data:', error);
-      console.error(`❌ [${userId}] Migration failed:`, error);
+      logger.error(`[Migration] Failed for user: ${userId}`, error);
     }
-  };
-  const login = async (email: string, password: string): Promise<boolean> => {
+  }, []);
+  const login = useCallback(async (email: string, password: string): Promise<boolean> => {
     try {
       setLoading(true);
       setError(null);
-      console.log(`🔐 Attempting login for: ${email}`);
+      logger.info('[Auth] Attempting login for:', email);
       await FirebaseService.loginUser(email, password);
-      console.log(`✅ Login successful for: ${email}`);
+      logger.info('[Auth] Login successful for:', email);
       return true;
     } catch (error: any) {
-      console.error('Login error:', error);
-      console.error(`❌ Login failed for: ${email}`, error.code);
+      logger.error('[Auth] Login failed for:', email, error);
       setError('Login failed. Please check your credentials.');
-      
-      // Não mostrar alert aqui - deixar para a tela de login tratar
-      throw error; // Re-throw para a tela capturar
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const register = async (userData: { name: string; email: string; password: string }): Promise<boolean> => {
-    try {
-      setLoading(true);
-      setError(null);
-      console.log(`📝 Attempting registration for: ${userData.email}`);
-      await FirebaseService.registerUser(userData.email, userData.password, userData.name);
-      console.log(`✅ Registration successful for: ${userData.email}`);
-      return true;
-    } catch (error: any) {
-      console.error('Registration error:', error);
-      console.error(`❌ Registration failed for: ${userData.email}`, error.code);
-      setError('Registration failed. Please try again.');
-      // Re-throw para a tela capturar e tratar
       throw error;
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  /**
-   * Função de logout centralizada - única responsável pelo redirecionamento
-   */
-  const logout = async () => {
+  const register = useCallback(async (userData: { name: string; email: string; password: string }): Promise<boolean> => {
     try {
-      console.log('🚪 [Auth] Starting logout process...');
       setLoading(true);
-      
-      // Clear Firebase authentication and local storage
+      setError(null);
+      logger.info('[Auth] Attempting registration for:', userData.email);
+      await FirebaseService.registerUser(userData.email, userData.password, userData.name);
+      logger.info('[Auth] Registration successful for:', userData.email);
+      return true;
+    } catch (error: any) {
+      logger.error('[Auth] Registration failed for:', userData.email, error);
+      setError('Registration failed. Please try again.');
+      throw error;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const logout = useCallback(async () => {
+    try {
+      logger.info('[Auth] Starting logout process');
+      setLoading(true);
+
       await AuthService.logout();
-      
-      // Clear local state
+
       setUser(null);
       setUserProfile(null);
       setIsAuthenticated(false);
       setError(null);
-      
-      console.log('✅ [Auth] Logout completed successfully');
+
+      logger.info('[Auth] Logout completed successfully');
       router.replace('/auth/login');
     } catch (error) {
-      console.error('❌ [Auth] Error during logout:', error);
-      
-      // Force logout even if Firebase/AuthService fails
+      logger.error('[Auth] Error during logout:', error);
+
       setUser(null);
       setUserProfile(null);
       setIsAuthenticated(false);
       setError(null);
-      
+
       router.replace('/auth/login');
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const updateUserProfile = async (updates: Partial<UserProfile>) => {
+  const updateUserProfile = useCallback(async (updates: Partial<UserProfile>) => {
     try {
       if (!user) throw new Error('No authenticated user');
-      
+
       setError(null);
-      console.log(`🔄 [${user.uid}] Updating user profile...`);
-      
-      // If updating profile image, delete old image first
-      if (updates.profileImageUrl && userProfile?.profileImageUrl && 
+      logger.info('[Auth] Updating user profile:', user.uid);
+
+      if (updates.profileImageUrl && userProfile?.profileImageUrl &&
           userProfile.profileImageUrl !== updates.profileImageUrl) {
         try {
-          console.log(`🗑️ [${user.uid}] Deleting old profile image`);
+          logger.debug('[Auth] Deleting old profile image:', user.uid);
           await FirebaseService.deleteProfileImage(userProfile.profileImageUrl);
         } catch (error) {
-          console.warn('Could not delete old profile image:', error);
-          // Don't fail the update if old image deletion fails
+          logger.warn('[Auth] Could not delete old profile image:', error);
         }
       }
-      
+
       await FirebaseService.updateUserProfile(user.uid, updates);
-      console.log(`✅ [${user.uid}] Profile updated successfully`);
-      
-      // Update local state
+      logger.info('[Auth] Profile updated successfully:', user.uid);
+
       setUserProfile(prev => prev ? { ...prev, ...updates } : null);
     } catch (error) {
-      console.error('Error updating profile:', error);
-      console.error(`❌ [${user?.uid}] Profile update failed:`, error);
+      logger.error('[Auth] Profile update failed:', user?.uid, error);
       setError('Failed to update profile. Please try again.');
       throw error;
     }
-  };
+  }, [user, userProfile]);
 
+
+  const contextValue = useMemo(
+    () => ({
+      user,
+      userProfile,
+      isAuthenticated,
+      loading,
+      error,
+      login,
+      register,
+      logout,
+      updateUserProfile,
+      setUser,
+      setUserProfile,
+      setIsAuthenticated,
+    }),
+    [user, userProfile, isAuthenticated, loading, error, login, register, logout, updateUserProfile]
+  );
 
   return (
-    <AuthContext.Provider
-      value={{
-        user,
-        userProfile,
-        isAuthenticated,
-        loading,
-        error,
-        login,
-        register,
-        logout,
-        updateUserProfile,
-        setUser,
-        setUserProfile,
-        setIsAuthenticated,
-      }}
-    >
+    <AuthContext.Provider value={contextValue}>
       {children}
     </AuthContext.Provider>
   );

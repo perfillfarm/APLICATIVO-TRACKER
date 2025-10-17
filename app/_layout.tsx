@@ -9,6 +9,8 @@ import { FirebaseRecordsProvider } from '@/contexts/FirebaseRecordsContext';
 import { FirebaseStatsProvider } from '@/contexts/FirebaseStatsContext';
 import { FirebaseSettingsProvider } from '@/contexts/FirebaseSettingsContext';
 import { router } from 'expo-router';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { logger } from '@/utils/logger';
 
 export default function RootLayout() {
   useFrameworkReady();
@@ -17,8 +19,7 @@ export default function RootLayout() {
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const handleLogout = () => {
-        console.log('🔄 [RootLayout] Logout event detected');
-        // Force immediate navigation to login
+        logger.info('[RootLayout] Logout event detected');
         setTimeout(() => {
           router.replace('/auth/login');
         }, 50);
@@ -30,12 +31,13 @@ export default function RootLayout() {
   }, []);
 
   return (
-    <LanguageProvider>
-      <ThemeProvider>
-        <FirebaseAuthProvider>
-          <FirebaseRecordsProvider>
-            <FirebaseStatsProvider>
-              <FirebaseSettingsProvider>
+    <ErrorBoundary>
+      <LanguageProvider>
+        <ThemeProvider>
+          <FirebaseAuthProvider>
+            <FirebaseRecordsProvider>
+              <FirebaseStatsProvider>
+                <FirebaseSettingsProvider>
                   <Stack screenOptions={{ headerShown: false }}>
                     <Stack.Screen name="index" />
                     <Stack.Screen name="auth" />
@@ -43,11 +45,12 @@ export default function RootLayout() {
                     <Stack.Screen name="+not-found" />
                   </Stack>
                   <StatusBar style="auto" />
-              </FirebaseSettingsProvider>
-            </FirebaseStatsProvider>
-          </FirebaseRecordsProvider>
-        </FirebaseAuthProvider>
-      </ThemeProvider>
-    </LanguageProvider>
+                </FirebaseSettingsProvider>
+              </FirebaseStatsProvider>
+            </FirebaseRecordsProvider>
+          </FirebaseAuthProvider>
+        </ThemeProvider>
+      </LanguageProvider>
+    </ErrorBoundary>
   );
 }
